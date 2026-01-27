@@ -1,0 +1,7 @@
+{
+  "name": "GastroDesigner AI",
+  "description": "Herramienta profesional de diseño gráfico para restaurantes que genera flyers optimizados para ventas basados en imágenes de referencia y fotos reales de productos.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
