@@ -29,7 +29,7 @@ async function imageToPart(imageSource: string): Promise<ImagePart> {
     }
   } catch (e) {
     console.error("Error en la conversión de imagen:", e);
-    throw new Error("No se pudo procesar la imagen.");
+    throw new Error("Error al procesar la imagen seleccionada.");
   }
 }
 
@@ -42,7 +42,7 @@ export async function extractBrandColors(logoBase64: string): Promise<{ hex: str
     contents: {
       parts: [
         part,
-        { text: "Analiza este logo de restaurante. Devuelve un JSON estrictamente con este formato: { \"hex\": \"#color_principal\", \"vibe\": \"estilo_visual\" }" }
+        { text: "Analiza este logo. Devuelve un JSON: { \"hex\": \"#color_principal_vibrante\", \"vibe\": \"estilo\" }" }
       ]
     },
     config: {
@@ -84,26 +84,21 @@ export async function generateRestaurantFlyer(
   const modelName = 'gemini-2.5-flash-image';
 
   const promptText = `
-    ROL: Director de Arte Senior y Especialista en Marketing Gastronómico.
-    OBJETIVO: Crear un flyer publicitario de ALTO IMPACTO y CALIDAD PREMIUM.
-    
-    ESTRUCTURA DE DATOS (OBLIGATORIO USAR):
-    - NOMBRE DEL NEGOCIO: "${restaurantInfo.name}"
-    - PRODUCTO A DESTACAR: "${restaurantInfo.product}" (Usa la foto real adjunta como elemento central).
-    - PROMOCIÓN/PRECIO: "${restaurantInfo.pricePromo}" (Haz que resalte visualmente).
-    - CONTACTO/TELÉFONO: "${restaurantInfo.phone || ''}"
-    - LLAMADA A LA ACCIÓN: "${restaurantInfo.ctaText || '¡Pide ahora!'}"
-    
-    ESTILO VISUAL:
-    - COLOR DE MARCA: ${restaurantInfo.brandColor || '#9333ea'}. Úsalo para acentos, fondos y tipografía.
-    ${refPart ? '- INSPIRACIÓN: Sigue fielmente la composición y estética de la IMAGEN DE REFERENCIA.' : '- CREATIVIDAD LIBRE: Crea un diseño moderno, limpio y apetitoso que combine con el producto.'}
-    
-    REGLAS CRÍTICAS:
-    1. NO USAR TEXTO GENÉRICO. Usa exactamente los datos proporcionados.
-    2. El producto debe verse DELICIOSO. Mejora la iluminación y el entorno digitalmente.
-    3. Tipografía: Moderna, legible y con jerarquía clara.
-    4. Logo: Integra el logo adjunto de forma elegante.
-    5. Formato: ${aspectRatio === '1:1' ? 'Cuadrado (Post)' : 'Vertical (Story)'}.
+    ROL: Director Creativo de Agencia de Marketing Gastronómico.
+    TAREAS DE DISEÑO:
+    1. PROTAGONISMO: El producto de la foto real debe ser el centro visual, con iluminación mejorada y sombras realistas.
+    2. TEXTOS REALES (MANDATORIO): 
+       - Título: "${restaurantInfo.name}" (Tipografía Bold/Elegante).
+       - Oferta: "${restaurantInfo.pricePromo}" (En un badge o tipografía gigante de impacto).
+       - Producto: "${restaurantInfo.product}"
+       - Contacto: "${restaurantInfo.phone || ''}"
+       - Botón/CTA: "${restaurantInfo.ctaText || '¡Ordena Ya!'}"
+    3. PALETA: Usa el color ${restaurantInfo.brandColor || '#9333ea'} para crear una atmósfera coherente.
+    4. ESTILO: 
+       ${refPart 
+         ? 'Imita la composición, el uso de texturas y el estilo de la imagen de referencia adjunta.' 
+         : 'Crea un diseño "Minimalista Premium" con degradados suaves, tipografía Sans Serif moderna y elementos gráficos limpios.'}
+    5. CALIDAD: Evita textos borrosos. Genera una pieza final de nivel profesional para ${aspectRatio === '1:1' ? 'Post de Instagram' : 'Stories/TikTok'}.
   `;
 
   try {
@@ -134,10 +129,10 @@ export async function generateRestaurantFlyer(
       }
     }
 
-    if (!imageUrl) throw new Error('Error en el renderizado de la imagen.');
+    if (!imageUrl) throw new Error('La IA no pudo renderizar el diseño.');
     return imageUrl;
   } catch (error: any) {
-    console.error("Error en motor de diseño:", error);
+    console.error("Error en el motor de diseño:", error);
     throw error;
   }
 }
