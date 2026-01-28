@@ -9,26 +9,40 @@ interface ImagePart {
   };
 }
 
-const getBase64Data = (base64: string) => {
-  const parts = base64.split(',');
-  if (parts.length < 2) return { data: '', mimeType: 'image/png' };
-  const header = parts[0];
-  const data = parts[1];
-  const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
-  return { data, mimeType };
-};
+async function imageToPart(imageSource: string): Promise<ImagePart> {
+  try {
+    if (imageSource.startsWith('data:')) {
+      const parts = imageSource.split(',');
+      const mimeType = parts[0].match(/:(.*?);/)?.[1] || 'image/png';
+      const data = parts[1];
+      return { inlineData: { data, mimeType } };
+    } else {
+      const response = await fetch(imageSource);
+      const blob = await response.blob();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      return { inlineData: { data: base64, mimeType: blob.type } };
+    }
+  } catch (e) {
+    console.error("Error en la conversión de imagen:", e);
+    throw new Error("No se pudo procesar la imagen.");
+  }
+}
 
 export async function extractBrandColors(logoBase64: string): Promise<{ hex: string; vibe: string }> {
-  // Create a new GoogleGenAI instance right before making an API call
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const { data, mimeType } = getBase64Data(logoBase64);
+  const part = await imageToPart(logoBase64);
 
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
     contents: {
       parts: [
-        { inlineData: { data, mimeType } },
-        { text: "Analiza este logo. Devuelve únicamente un objeto JSON con el color hexadecimal predominante (hex) y una palabra que describa el estilo visual (vibe) como 'moderno', 'rustico', 'elegante' o 'divertido'." }
+        part,
+        { text: "Analiza este logo de restaurante. Devuelve un JSON estrictamente con este formato: { \"hex\": \"#color_principal\", \"vibe\": \"estilo_visual\" }" }
       ]
     },
     config: {
@@ -45,87 +59,72 @@ export async function extractBrandColors(logoBase64: string): Promise<{ hex: str
   });
 
   try {
-    // Correct way to get text content is using the .text property and trimming it for robust parsing
-    const text = response.text?.trim() || '{}';
-    return JSON.parse(text);
+    return JSON.parse(response.text?.trim() || '{"hex":"#9333ea","vibe":"moderno"}');
   } catch {
-    return { hex: '#f97316', vibe: 'moderno' };
+    return { hex: '#9333ea', vibe: 'moderno' };
   }
 }
 
 export async function generateRestaurantFlyer(
   restaurantInfo: RestaurantInfo,
   productImages: string[], 
-  referenceImage: string, 
+  referenceImage: string | null, 
   aspectRatio: '1:1' | '9:16'
 ): Promise<string> {
-  // Create a new GoogleGenAI instance right before making an API call to ensure current key is used
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-  const productParts: ImagePart[] = productImages.map(img => {
-    const { data, mimeType } = getBase64Data(img);
-    return { inlineData: { data, mimeType } };
-  });
-
-  const refInfo = getBase64Data(referenceImage);
-  const refPart: ImagePart = { inlineData: { data: refInfo.data, mimeType: refInfo.mimeType } };
-
+  const productParts = await Promise.all(productImages.map(img => imageToPart(img)));
+  const refPart = referenceImage ? await imageToPart(referenceImage) : null;
+  
   let logoPart: ImagePart | null = null;
   if (restaurantInfo.logo) {
-    const lInfo = getBase64Data(restaurantInfo.logo);
-    logoPart = { inlineData: { data: lInfo.data, mimeType: lInfo.mimeType } };
+    logoPart = await imageToPart(restaurantInfo.logo);
   }
 
-  // Use high-quality model if requested, else default to gemini-2.5-flash-image
-  const modelName = restaurantInfo.quality === 'ultra' ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
+  const modelName = 'gemini-2.5-flash-image';
 
-  const prompt = `
-    ACTÚA COMO UN DISEÑADOR GRÁFICO SENIOR DE MARKETING GASTRONÓMICO.
+  const promptText = `
+    ROL: Director de Arte Senior y Especialista en Marketing Gastronómico.
+    OBJETIVO: Crear un flyer publicitario de ALTO IMPACTO y CALIDAD PREMIUM.
     
-    ESTRECHA FIDELIDAD REQUERIDA: Debes REPLICAR EXACTAMENTE la composición, disposición de elementos, ángulos de cámara y esquema de iluminación de la IMAGEN DE REFERENCIA adjunta.
+    ESTRUCTURA DE DATOS (OBLIGATORIO USAR):
+    - NOMBRE DEL NEGOCIO: "${restaurantInfo.name}"
+    - PRODUCTO A DESTACAR: "${restaurantInfo.product}" (Usa la foto real adjunta como elemento central).
+    - PROMOCIÓN/PRECIO: "${restaurantInfo.pricePromo}" (Haz que resalte visualmente).
+    - CONTACTO/TELÉFONO: "${restaurantInfo.phone || ''}"
+    - LLAMADA A LA ACCIÓN: "${restaurantInfo.ctaText || '¡Pide ahora!'}"
     
-    OBJETIVO:
-    - Sustituir los productos de la referencia por los PRODUCTOS DEL USUARIO adjuntos.
-    - Integrar el LOGO DEL USUARIO en la esquina o posición donde el diseño sea más efectivo (o donde esté en la referencia).
-    - Usar el color de marca "${restaurantInfo.brandColor || '#f97316'}" para elementos gráficos, formas o textos.
+    ESTILO VISUAL:
+    - COLOR DE MARCA: ${restaurantInfo.brandColor || '#9333ea'}. Úsalo para acentos, fondos y tipografía.
+    ${refPart ? '- INSPIRACIÓN: Sigue fielmente la composición y estética de la IMAGEN DE REFERENCIA.' : '- CREATIVIDAD LIBRE: Crea un diseño moderno, limpio y apetitoso que combine con el producto.'}
     
-    DATOS DEL FLYER:
-    - Nombre: "${restaurantInfo.name}"
-    - Producto Principal: "${restaurantInfo.product}"
-    - Oferta/Precio: "${restaurantInfo.pricePromo}"
-    - Vibe de Marca: "${restaurantInfo.type}"
-    
-    INSTRUCCIONES CRÍTICAS:
-    1. REPLICA la estructura de capas de la referencia (fondo, elementos decorativos, sombras).
-    2. Mantén el estilo de las tipografías de la referencia pero aplicadas al contenido del usuario.
-    3. Asegura que el producto "${restaurantInfo.product}" se vea extremadamente apetitoso y real, no generado por IA (estilo fotografía publicitaria).
-    4. El diseño final debe ser una versión personalizada de la referencia, no una interpretación libre.
+    REGLAS CRÍTICAS:
+    1. NO USAR TEXTO GENÉRICO. Usa exactamente los datos proporcionados.
+    2. El producto debe verse DELICIOSO. Mejora la iluminación y el entorno digitalmente.
+    3. Tipografía: Moderna, legible y con jerarquía clara.
+    4. Logo: Integra el logo adjunto de forma elegante.
+    5. Formato: ${aspectRatio === '1:1' ? 'Cuadrado (Post)' : 'Vertical (Story)'}.
   `;
-
-  const contents = {
-    parts: [
-      ...productParts,
-      refPart,
-      ...(logoPart ? [logoPart] : []),
-      { text: prompt }
-    ]
-  };
 
   try {
     const response = await ai.models.generateContent({
       model: modelName,
-      contents,
+      contents: {
+        parts: [
+          ...productParts,
+          ...(refPart ? [refPart] : []),
+          ...(logoPart ? [logoPart] : []),
+          { text: promptText }
+        ]
+      },
       config: {
         imageConfig: {
-          aspectRatio: aspectRatio,
-          // imageSize is only supported for gemini-3-pro-image-preview
-          ...(restaurantInfo.quality === 'ultra' ? { imageSize: "4K" } : {})
+          aspectRatio: aspectRatio
         }
       }
     });
 
     let imageUrl = '';
-    // Find the image part in candidates
     if (response.candidates?.[0]?.content?.parts) {
       for (const part of response.candidates[0].content.parts) {
         if (part.inlineData) {
@@ -135,10 +134,10 @@ export async function generateRestaurantFlyer(
       }
     }
 
-    if (!imageUrl) throw new Error('No image returned from model');
+    if (!imageUrl) throw new Error('Error en el renderizado de la imagen.');
     return imageUrl;
   } catch (error: any) {
-    console.error("Gemini Error:", error);
+    console.error("Error en motor de diseño:", error);
     throw error;
   }
 }

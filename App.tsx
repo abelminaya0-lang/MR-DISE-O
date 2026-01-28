@@ -14,14 +14,16 @@ const downloadImage = (url: string, filename: string) => {
 };
 
 const App: React.FC = () => {
-  const [view, setView] = useState<'dashboard' | 'generator'>('dashboard');
+  const [step, setStep] = useState(1);
   const [restaurantInfo, setRestaurantInfo] = useState<RestaurantInfo>({
     name: '',
-    type: 'cevicheria',
+    type: 'Comida Rápida',
     targetAudience: 'popular',
     context: 'local',
-    product: 'combo marino',
+    product: '',
     pricePromo: '',
+    phone: '',
+    ctaText: '¡Ordena hoy!',
     quality: 'ultra',
     brandColor: '#9333ea'
   });
@@ -30,28 +32,28 @@ const App: React.FC = () => {
   const [referenceImage, setReferenceImage] = useState<string[]>([]);
   const [logoImages, setLogoImages] = useState<string[]>([]);
   const [status, setStatus] = useState<GenerationStatus>(GenerationStatus.IDLE);
-  const [generatedFlyers, setGeneratedFlyers] = useState<GeneratedFlyer[]>([]);
+  const [generatedFlyer, setGeneratedFlyer] = useState<GeneratedFlyer | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isKeySelected, setIsKeySelected] = useState<boolean>(false);
-  const [isGalleryOpen, setIsGalleryOpen] = useState(false);
-  const [isExtractingColor, setIsExtractingColor] = useState(false);
+  const [aspectRatio, setAspectRatio] = useState<'1:1' | '9:16'>('9:16');
 
   useEffect(() => {
     const checkKey = async () => {
       try {
-        const selected = await window.aistudio.hasSelectedApiKey();
-        setIsKeySelected(selected);
-      } catch (e) {
-        console.error("Error checking API key status", e);
-      }
+        if (window.aistudio) {
+          const selected = await window.aistudio.hasSelectedApiKey();
+          setIsKeySelected(selected);
+        }
+      } catch (e) { console.error(e); }
     };
     checkKey();
   }, []);
 
+  // Proceso automático del logo para obtener colores de marca
   useEffect(() => {
-    const updateBranding = async () => {
+    const processLogo = async () => {
       if (logoImages.length > 0 && logoImages[0] !== restaurantInfo.logo) {
-        setIsExtractingColor(true);
+        setStatus(GenerationStatus.BRANDING);
         try {
           const result = await extractBrandColors(logoImages[0]);
           setRestaurantInfo(prev => ({
@@ -59,436 +61,341 @@ const App: React.FC = () => {
             logo: logoImages[0],
             brandColor: result.hex
           }));
+          setStatus(GenerationStatus.IDLE);
+          setError(null);
         } catch (e) {
-          console.error("Branding extraction failed", e);
-        } finally {
-          setIsExtractingColor(false);
+          console.error("No se pudo extraer el color", e);
+          setStatus(GenerationStatus.IDLE);
         }
       }
     };
-    updateBranding();
+    processLogo();
   }, [logoImages]);
 
   const handleSelectKey = async () => {
-    try {
+    if (window.aistudio) {
       await window.aistudio.openSelectKey();
       setIsKeySelected(true);
-      setError(null);
-    } catch (e) {
-      console.error("Key selection failed", e);
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
-    setRestaurantInfo(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleGenerate = async () => {
-    if (!productImages.length || !referenceImage.length) {
-      setError("Por favor sube una imagen de producto y selecciona una plantilla.");
+  const nextStep = () => {
+    if (step === 1 && productImages.length === 0) {
+      setError("Necesito la foto de tu producto para empezar.");
       return;
     }
+    if (step === 2 && logoImages.length === 0) {
+      setError("Sube tu logo para que el diseño tenga tus colores.");
+      return;
+    }
+    setError(null);
+    setStep(s => s + 1);
+  };
 
-    if (!isKeySelected) {
+  const prevStep = () => setStep(s => s - 1);
+
+  const handleGenerate = async () => {
+    if (!isKeySelected && window.aistudio) {
       await handleSelectKey();
     }
-
+    
     setError(null);
-    setStatus(GenerationStatus.ANALYZING);
+    setStatus(GenerationStatus.DESIGNING);
 
     try {
-      const formats: ('1:1' | '9:16')[] = ['9:16']; // Default for Stories as per screenshot
-      const results: GeneratedFlyer[] = [];
+      const imageUrl = await generateRestaurantFlyer(
+        restaurantInfo,
+        productImages,
+        referenceImage.length > 0 ? referenceImage[0] : null,
+        aspectRatio
+      );
 
-      for (const format of formats) {
-        setStatus(GenerationStatus.DESIGNING);
-        const imageUrl = await generateRestaurantFlyer(
-          restaurantInfo,
-          productImages,
-          referenceImage[0],
-          format
-        );
-        results.push({ url: imageUrl, format, description: `Banner ${format}` });
-      }
-
-      setGeneratedFlyers(results);
+      setGeneratedFlyer({ url: imageUrl, format: aspectRatio, description: 'Flyer Final' });
       setStatus(GenerationStatus.COMPLETED);
+      setStep(6);
     } catch (err: any) {
-      setError("Error al generar el banner. Intenta de nuevo.");
+      setError("Hubo un error en el servidor de diseño. Inténtalo de nuevo.");
       setStatus(GenerationStatus.ERROR);
     }
   };
 
   const templates = [
-    "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400&h=700&fit=crop",
-    "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=400&h=700&fit=crop",
-    "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=400&h=700&fit=crop",
-    "https://images.unsplash.com/photo-1567620905732-2d1ec7bb7445?w=400&h=700&fit=crop",
-    "https://images.unsplash.com/photo-1493770348161-369560ae357d?w=400&h=700&fit=crop"
+    "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500&h=800&fit=crop",
+    "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=500&h=800&fit=crop",
+    "https://images.unsplash.com/photo-1555939594-58d7cb561ad1?w=500&h=800&fit=crop",
+    "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=500&h=800&fit=crop",
+    "https://images.unsplash.com/photo-1476224489421-38c584e8d1fb?w=500&h=800&fit=crop"
   ];
 
-  const accentColor = restaurantInfo.brandColor || '#9333ea';
-
-  const Sidebar = () => (
-    <div className="w-64 min-h-screen bg-black border-r border-[#1a1a1a] flex flex-col p-4 shrink-0 overflow-y-auto no-scrollbar">
-      <div className="flex items-center gap-2 mb-10 px-2">
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center font-black text-white italic" style={{ background: `linear-gradient(90deg, ${accentColor} 0%, #db2777 100%)` }}>
-          MR
-        </div>
-        <span className="font-black text-sm tracking-tight">MR DISEÑO</span>
-      </div>
-
-      <nav className="flex-1 space-y-6">
-        <div>
-          <button onClick={() => setView('dashboard')} className={`flex items-center gap-3 w-full p-2.5 rounded-xl text-sm font-semibold transition-all ${view === 'dashboard' ? 'bg-[#111] text-white' : 'text-gray-400 hover:bg-[#111]'}`}>
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>
-            Inicio
-          </button>
-        </div>
-
-        <div className="space-y-2">
-          <p className="text-[10px] font-black text-gray-500 uppercase px-2 tracking-widest">Modo Básico</p>
-          <button onClick={() => setView('generator')} className={`flex items-center gap-3 w-full p-2.5 rounded-xl text-sm font-semibold transition-all ${view === 'generator' ? 'bg-[#111] text-white' : 'text-gray-400 hover:bg-[#111]'}`}>
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-            Generador de Banners
-          </button>
-          <button className="flex items-center gap-3 w-full p-2.5 rounded-xl hover:bg-[#111] text-sm text-gray-500 font-semibold opacity-50 cursor-not-allowed">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
-            Generador de Landings
-          </button>
-        </div>
-
-        <div className="space-y-4 pt-4">
-          <p className="text-[10px] font-black text-gray-500 uppercase px-2 tracking-widest">Uso de Créditos</p>
-          <div className="p-4 rounded-2xl border border-purple-500/40 bg-gradient-to-br from-[#111] to-[#000] relative overflow-hidden group">
-            <div className="relative z-10 flex justify-between items-center">
-              <div>
-                <p className="text-xs font-black">Actualiza tu plan</p>
-                <p className="text-[10px] text-gray-500">Tu plan actual: Gratis</p>
-              </div>
-              <div className="p-2 bg-white/5 rounded-lg group-hover:bg-purple-500 transition-colors shadow-inner"><svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg></div>
-            </div>
-            <div className="absolute top-0 right-0 w-full h-full bg-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="p-3 bg-purple-900/10 rounded-xl border border-white/5 flex justify-between items-center">
-              <div className="flex flex-col">
-                <span className="text-[10px] text-purple-400 font-black flex items-center gap-2">
-                   Créditos usados
-                </span>
-                <button className="text-[8px] text-gray-500 hover:text-gray-400 mt-1 flex items-center gap-1">
-                   Ver estado de cuenta
-                </button>
-              </div>
-              <span className="text-[10px] font-black bg-[#9333ea] text-white px-3 py-1 rounded-full">0/3</span>
-            </div>
-            
-            <div className="p-3 bg-blue-900/10 rounded-xl border border-white/5 flex justify-between items-center">
-              <div className="flex flex-col">
-                <span className="text-[10px] text-blue-400 font-black flex items-center gap-2">
-                   Créditos Adicionales
-                </span>
-                <button className="text-[8px] text-gray-500 hover:text-gray-400 mt-1 flex items-center gap-1">
-                   Ver estado de cuenta
-                </button>
-              </div>
-              <span className="text-[10px] font-black bg-blue-500 text-white px-3 py-1 rounded-full">0</span>
-            </div>
-
-            <div className="p-3 bg-green-900/10 rounded-xl border border-white/5 flex justify-between items-center">
-              <div className="flex flex-col">
-                <span className="text-[10px] text-green-400 font-black flex items-center gap-2">
-                   Créditos Ganados
-                </span>
-                <button className="text-[8px] text-gray-500 hover:text-gray-400 mt-1 flex items-center gap-1">
-                   Ver estado de cuenta
-                </button>
-              </div>
-              <span className="text-[10px] font-black bg-green-500 text-white px-3 py-1 rounded-full">0</span>
-            </div>
-          </div>
-        </div>
-      </nav>
-
-      <div className="mt-auto pt-4 border-t border-white/5 space-y-4">
-        <button className="w-full p-4 bg-purple-600/10 rounded-2xl flex items-center gap-3 group hover:bg-purple-600/20 transition-all">
-          <div className="p-2 bg-purple-500/20 rounded-lg text-purple-400">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7" /></svg>
-          </div>
-          <div className="text-left">
-            <p className="text-[10px] font-black text-white">Comparte y gana</p>
-            <p className="text-[8px] text-gray-500">Obtén 10 créditos c/u</p>
-          </div>
-        </button>
-        <div className="p-2 bg-[#111] rounded-2xl flex items-center justify-between border border-white/5">
-          <div className="w-9 h-9 rounded-xl bg-purple-600/20 flex items-center justify-center font-black text-purple-400 text-xs">A</div>
-          <button className="p-2 text-gray-500 hover:text-white transition-colors">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const Dashboard = () => (
-    <div className="flex-1 p-12 max-w-5xl animate-in fade-in duration-500">
-      <header className="mb-14">
-        <h1 className="text-4xl font-black mb-4 flex items-center gap-3">
-          Bienvenido de nuevo, Abel! 👋
-        </h1>
-        <p className="text-gray-400 text-lg font-medium">¿Qué te gustaría crear hoy?</p>
-      </header>
-
-      <div className="grid grid-cols-2 gap-8">
-        <div className="p-10 rounded-[2.5rem] bg-[#0d0d0d] border border-white/5 hover:border-purple-500/40 transition-all cursor-pointer group shadow-2xl relative overflow-hidden" onClick={() => setView('generator')}>
-          <div className="w-14 h-14 rounded-2xl bg-purple-900/30 flex items-center justify-center mb-8 text-purple-400 group-hover:scale-110 transition-transform duration-300">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-          </div>
-          <h3 className="text-2xl font-black mb-3">Generador de Banners</h3>
-          <p className="text-gray-500 text-sm mb-10 max-w-[240px]">Crea banners impresionantes para tus productos en segundos.</p>
-          <button className="px-10 py-3.5 rounded-2xl purple-gradient font-black text-sm flex items-center gap-3 shadow-lg shadow-purple-500/20 active:scale-95 transition-all">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-            Comenzar
-          </button>
-        </div>
-
-        <div className="p-10 rounded-[2.5rem] bg-[#0d0d0d] border border-white/5 opacity-80 cursor-not-allowed group shadow-2xl relative overflow-hidden">
-          <div className="w-14 h-14 rounded-2xl bg-[#1a1a1a] flex items-center justify-center mb-8 text-gray-600">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
-          </div>
-          <h3 className="text-2xl font-black mb-3">Generador de Landings</h3>
-          <p className="text-gray-500 text-sm mb-10 max-w-[240px]">Construye landing pages de alta conversión automáticamente.</p>
-          <button className="px-10 py-3.5 rounded-2xl bg-[#222] text-gray-500 font-black text-sm flex items-center gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-            Comenzar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-
-  const Generator = () => (
-    <div className="flex-1 p-10 max-w-6xl animate-in fade-in slide-in-from-right-4 duration-500">
-      <div className="flex items-center gap-5 mb-10">
-        <button onClick={() => setView('dashboard')} className="p-4 bg-[#0d0d0d] border border-white/5 rounded-2xl hover:bg-[#111] transition-all text-gray-400 hover:text-white">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
-        </button>
-        <div className="w-12 h-12 rounded-2xl bg-purple-500/10 flex items-center justify-center text-purple-400 border border-purple-500/20">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-        </div>
-        <div>
-          <h2 className="text-2xl font-black tracking-tight">{restaurantInfo.product}</h2>
-          <p className="text-xs text-gray-500 font-bold uppercase tracking-widest">{restaurantInfo.type}</p>
-        </div>
-      </div>
-
-      <div className="p-10 rounded-[2.5rem] bg-[#0d0d0d] border border-white/5 space-y-10 shadow-2xl relative overflow-hidden">
-        <div className="flex items-center gap-4">
-          <div className="p-2.5 rounded-xl purple-gradient">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" /></svg>
+  return (
+    <div className="flex min-h-screen bg-black text-white font-['Inter'] selection:bg-purple-500/30">
+      {/* SIDEBAR: NAVEGACIÓN DE PASOS */}
+      <div className="w-80 border-r border-white/5 bg-[#050505] p-10 flex flex-col shrink-0">
+        <div className="flex items-center gap-4 mb-20 group">
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center font-black text-white italic shadow-[0_0_20px_rgba(147,51,234,0.3)] transition-all group-hover:scale-110" style={{ background: `linear-gradient(135deg, ${restaurantInfo.brandColor || '#9333ea'} 0%, #db2777 100%)` }}>
+            MR
           </div>
           <div>
-            <h3 className="font-black text-sm">Generador de Banners</h3>
-            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Impulsado por MR DISEÑO AI</p>
+            <h1 className="font-black text-xl tracking-tighter">MR DISEÑO</h1>
+            <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Estudio AI</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-12">
-          <div className="space-y-4">
-            <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-purple-500"></span> 
-              Imagen del Producto
-            </p>
-            <div className="h-[400px] border-2 border-dashed border-[#1a1a1a] rounded-[2.5rem] flex flex-col items-center justify-center p-8 text-center hover:border-purple-500/30 transition-all bg-[#0a0a0a]/50 relative group overflow-hidden">
-              {productImages.length > 0 ? (
-                <div className="relative w-full h-full p-4">
-                  <img src={productImages[0]} className="w-full h-full object-contain rounded-3xl" />
-                  <button onClick={() => setProductImages([])} className="absolute top-4 right-4 p-3 bg-red-500 text-white rounded-2xl opacity-0 group-hover:opacity-100 transition-all">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-6">
-                   <div className="w-20 h-20 bg-[#111] rounded-[2rem] border border-white/5 flex items-center justify-center mx-auto text-gray-600 group-hover:text-purple-500 transition-all">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-                   </div>
-                   <ImageUploader label="" images={productImages} setImages={setProductImages} maxImages={1} description="Arrastra tu imagen aquí o busca archivos" />
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <p className="text-[10px] font-black uppercase text-gray-400 tracking-widest flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-purple-500"></span> 
-              Plantilla <span className="text-gray-600 font-medium normal-case ml-1">(selecciona de la galería)</span>
-            </p>
-            <div className="h-[340px] border border-[#1a1a1a] rounded-[2.5rem] flex flex-col items-center justify-center bg-[#0a0a0a] group hover:border-purple-500/30 transition-all overflow-hidden cursor-pointer relative" onClick={() => setIsGalleryOpen(true)}>
-              {referenceImage.length > 0 ? (
-                <img src={referenceImage[0]} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
-              ) : (
-                <div className="text-center group p-10">
-                  <div className="w-16 h-16 bg-[#111] rounded-[2rem] border border-white/5 flex items-center justify-center mx-auto mb-6 text-gray-600 group-hover:text-purple-500 transition-all duration-300">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-                  </div>
-                  <p className="text-sm font-black mb-1">Seleccionar Plantilla</p>
-                  <p className="text-[10px] text-gray-500 font-bold tracking-widest uppercase">de la Galería ZEPOL AI</p>
-                </div>
-              )}
-            </div>
-            <button className="w-full py-4 rounded-2xl border border-[#1a1a1a] text-xs font-black flex items-center justify-center gap-3 hover:bg-white/5 transition-all group" onClick={() => handleSelectKey()}>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500 group-hover:text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-              Subir desde PC
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-6">
-          <div className="p-6 rounded-3xl bg-[#0a0a0a] border border-[#1a1a1a] space-y-3">
-            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" /></svg>
-              Tamaño del Banner de Salida
-            </p>
-            <select className="w-full bg-transparent text-sm font-black focus:outline-none cursor-pointer appearance-none">
-              <option className="bg-[#111]">Instagram Stories (9:16)</option>
-              <option className="bg-[#111]">Instagram Post (1:1)</option>
-            </select>
-          </div>
-          <div className="p-6 rounded-3xl bg-[#0a0a0a] border border-[#1a1a1a] space-y-3">
-            <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg>
-              Idioma del Banner de Salida
-            </p>
-            <select className="w-full bg-transparent text-sm font-black focus:outline-none cursor-pointer appearance-none">
-              <option className="bg-[#111]">Español</option>
-              <option className="bg-[#111]">Inglés</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="flex items-center justify-between p-6 bg-[#0a0a0a] border border-[#1a1a1a] rounded-3xl">
-          <div className="flex items-center gap-4">
-            <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
-            </div>
-            <div>
-              <p className="text-sm font-black">Controles Avanzados</p>
-              <p className="text-[10px] text-gray-600 font-bold uppercase tracking-widest">Personaliza tu banner</p>
-            </div>
-          </div>
-          <div className="w-12 h-6 bg-[#1a1a1a] rounded-full relative p-1 cursor-pointer border border-white/5">
-            <div className="w-4 h-4 bg-gray-600 rounded-full"></div>
-          </div>
-        </div>
-
-        <button 
-          onClick={handleGenerate}
-          disabled={status === GenerationStatus.ANALYZING || status === GenerationStatus.DESIGNING}
-          className="w-full py-6 rounded-3xl bg-purple-600 text-white font-black text-xl hover:bg-purple-500 transition-all flex items-center justify-center gap-4 shadow-2xl active:scale-[0.98]"
-        >
-          {status === GenerationStatus.ANALYZING || status === GenerationStatus.DESIGNING ? (
-            <svg className="animate-spin h-7 w-7" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-          ) : (
-            <>
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-              Generar Banner
-            </>
-          )}
-        </button>
-      </div>
-
-      {status === GenerationStatus.COMPLETED && (
-        <div className="mt-16 grid grid-cols-2 gap-8 animate-in fade-in slide-in-from-bottom-5 duration-700">
-           {generatedFlyers.map((flyer, idx) => (
-             <div key={idx} className="bg-[#0d0d0d] p-6 rounded-[3rem] border border-white/5 space-y-6 shadow-2xl group">
-                <div className="flex justify-between items-center px-2">
-                   <span className="text-[10px] font-black text-white px-4 py-1.5 rounded-full uppercase tracking-widest" style={{ backgroundColor: accentColor }}>{flyer.format}</span>
-                   <button onClick={() => downloadImage(flyer.url, `mr-diseno-banner-${idx}.png`)} className="p-3 bg-white/5 rounded-2xl hover:bg-white/10 transition-colors text-gray-400 hover:text-white">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                   </button>
-                </div>
-                <div className="rounded-[2rem] overflow-hidden border border-white/5 bg-black aspect-[9/16] relative">
-                  <img src={flyer.url} className="w-full h-full object-contain" />
-                </div>
-             </div>
-           ))}
-        </div>
-      )}
-    </div>
-  );
-
-  const GalleryModal = () => (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setIsGalleryOpen(false)}></div>
-      <div className="relative w-full max-w-6xl bg-[#0d0d0d] rounded-[3rem] border border-white/10 overflow-hidden flex flex-col max-h-[90vh] shadow-3xl">
-        <div className="p-10 border-b border-white/5 flex items-center justify-between">
-          <div className="flex items-center gap-5">
-            <div className="w-14 h-14 rounded-2xl bg-purple-900/30 flex items-center justify-center text-purple-400 border border-purple-500/20">
-               <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
-            </div>
-            <div>
-              <h2 className="text-3xl font-black tracking-tight">Galería de Banners</h2>
-              <div className="flex items-center gap-2 mt-1">
-                 <div className="px-4 py-1 bg-purple-500/10 rounded-full text-[10px] font-black text-purple-400 border border-purple-500/20 flex items-center gap-2 uppercase tracking-widest">
-                  Favs <span className="ml-1 opacity-60">0</span>
-                </div>
+        <div className="space-y-6 flex-1">
+          {[
+            { n: 1, l: "Producto", d: "Foto del plato" },
+            { n: 2, l: "Identidad", d: "Logo y Colores" },
+            { n: 3, l: "Inspiración", d: "Estilo visual" },
+            { n: 4, l: "Marketing", d: "Datos del flyer" },
+            { n: 5, l: "Publicación", d: "Elegir formato" }
+          ].map((item) => (
+            <div key={item.n} className={`flex items-center gap-5 p-4 rounded-3xl transition-all ${step === item.n ? 'bg-white/5 border border-white/10 shadow-lg' : 'opacity-20'}`}>
+              <div className={`w-10 h-10 rounded-2xl flex items-center justify-center text-xs font-black shadow-inner ${step === item.n ? 'bg-white text-black' : 'bg-white/10 text-white'}`}>{item.n}</div>
+              <div className="flex flex-col">
+                <span className="text-xs font-black uppercase tracking-widest">{item.l}</span>
+                <span className="text-[10px] text-gray-500 font-medium">{item.d}</span>
               </div>
             </div>
-          </div>
-          <button onClick={() => setIsGalleryOpen(false)} className="p-4 hover:bg-white/5 rounded-2xl transition-colors text-gray-500 hover:text-white">
-             <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-
-        <div className="px-10 py-6 overflow-x-auto whitespace-nowrap space-x-4 no-scrollbar border-b border-white/5 bg-[#0a0a0a]">
-          {['Todos', 'Belleza', 'Moda', 'Salud', 'Mascotas', 'Deportes', 'Viajes', 'Suplementos', 'Accesorios', 'Alcohol', 'Comida'].map((cat, i) => (
-            <button key={i} className={`px-8 py-3 rounded-2xl text-xs font-black transition-all uppercase tracking-widest ${cat === 'Todos' ? 'purple-gradient text-white shadow-lg' : 'bg-[#111] text-gray-500 border border-white/5 hover:bg-[#1a1a1a]'}`}>
-              {cat}
-            </button>
           ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-10 grid grid-cols-5 gap-6 no-scrollbar bg-black/20">
-          {templates.map((src, i) => (
-            <div 
-              key={i} 
-              className={`aspect-[9/16] rounded-3xl overflow-hidden border-4 cursor-pointer transition-all duration-300 relative group ${referenceImage[0] === src ? 'border-purple-500 scale-[0.98]' : 'border-transparent hover:border-white/10'}`}
-              onClick={() => setReferenceImage([src])}
-            >
-              <img src={src} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+        <div className="mt-auto pt-10 border-t border-white/5">
+           <button onClick={handleSelectKey} className={`w-full py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${isKeySelected ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'}`}>
+             {isKeySelected ? "✓ IA CONECTADA" : "⚿ CONFIGURAR API"}
+           </button>
+        </div>
+      </div>
+
+      {/* ÁREA DE TRABAJO */}
+      <main className="flex-1 p-20 overflow-y-auto no-scrollbar relative bg-[#010101]">
+        <div className="max-w-4xl mx-auto">
+          
+          {/* PASO 1: FOTO PRODUCTO */}
+          {step === 1 && (
+            <div className="animate-in fade-in slide-in-from-bottom-6 duration-500">
+              <span className="text-[10px] font-black text-purple-500 uppercase tracking-[0.3em] mb-4 block">Fase de Producción</span>
+              <h2 className="text-5xl font-black mb-6 italic tracking-tight">TU PRODUCTO <span className="text-white/20">ESTRELLA</span></h2>
+              <p className="text-gray-400 mb-12 text-lg font-medium leading-relaxed">Sube la mejor foto de tu plato. No te preocupes por el fondo, nuestro motor de IA lo transformará en una pieza publicitaria de lujo.</p>
+              
+              <div className="bg-[#080808] p-16 rounded-[4rem] border border-white/5 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.5)]">
+                 <ImageUploader label="" images={productImages} setImages={setProductImages} maxImages={1} description="Click para seleccionar la foto del plato" />
+              </div>
+
+              <div className="mt-16 flex justify-end">
+                <button onClick={nextStep} className="px-14 py-6 bg-white text-black font-black rounded-3xl hover:bg-gray-200 transition-all flex items-center gap-4 group shadow-xl shadow-white/5 active:scale-95">
+                  PASO SIGUIENTE: LOGO
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                </button>
+              </div>
             </div>
-          ))}
-        </div>
+          )}
 
-        <div className="p-10 border-t border-white/5 flex items-center justify-between bg-[#0a0a0a]">
-          <p className="text-gray-600 text-sm font-bold uppercase tracking-widest flex items-center gap-3">
-             Haz clic en un template para seleccionarlo
-          </p>
-          <div className="flex gap-4">
-            <button onClick={() => setIsGalleryOpen(false)} className="px-10 py-4 rounded-2xl border border-white/10 font-black text-sm text-gray-400 hover:text-white hover:bg-white/5 transition-all">Cancelar</button>
-            <button onClick={() => setIsGalleryOpen(false)} className="px-10 py-4 rounded-2xl purple-gradient font-black text-sm text-white shadow-xl hover:scale-105 active:scale-95 transition-all">Usar Este Template</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+          {/* PASO 2: LOGO E IDENTIDAD */}
+          {step === 2 && (
+            <div className="animate-in fade-in slide-in-from-right-6 duration-500">
+              <span className="text-[10px] font-black text-purple-500 uppercase tracking-[0.3em] mb-4 block">Identidad Visual</span>
+              <h2 className="text-5xl font-black mb-6 italic tracking-tight">TU LOGOTIPO</h2>
+              <p className="text-gray-400 mb-12 text-lg font-medium">Extraeremos automáticamente tu paleta de colores para que el flyer sea 100% fiel a tu marca.</p>
+              
+              <div className="bg-[#080808] p-16 rounded-[4rem] border border-white/5 shadow-2xl space-y-10">
+                 <ImageUploader label="" images={logoImages} setImages={setLogoImages} maxImages={1} description="Sube tu logo (PNG transparente preferido)" />
+                 
+                 {status === GenerationStatus.BRANDING ? (
+                    <div className="flex items-center gap-4 text-purple-400 font-black animate-pulse text-sm uppercase tracking-widest p-6 bg-purple-500/5 rounded-3xl border border-purple-500/10">
+                       <svg className="animate-spin h-6 w-6" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                       Analizando ADN de marca...
+                    </div>
+                 ) : restaurantInfo.brandColor && (
+                    <div className="flex items-center gap-6 p-8 bg-white/5 rounded-[2.5rem] border border-white/10 animate-in zoom-in-95 duration-500">
+                       <div className="w-20 h-20 rounded-3xl shadow-2xl flex items-center justify-center" style={{ backgroundColor: restaurantInfo.brandColor }}>
+                          <span className="text-white text-[10px] font-black bg-black/20 px-2 py-1 rounded-lg">BRAND</span>
+                       </div>
+                       <div>
+                          <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1">Color de Marca Identificado</p>
+                          <p className="font-mono text-2xl font-black tracking-tighter">{restaurantInfo.brandColor}</p>
+                       </div>
+                    </div>
+                 )}
+              </div>
 
-  return (
-    <div className="flex min-h-screen bg-black text-white">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto no-scrollbar bg-[#010101]">
-        {view === 'dashboard' ? <Dashboard /> : <Generator />}
+              <div className="mt-16 flex justify-between">
+                <button onClick={prevStep} className="px-12 py-6 bg-white/5 text-white font-black rounded-3xl hover:bg-white/10 transition-all border border-white/5">ATRÁS</button>
+                <button onClick={nextStep} className="px-14 py-6 bg-white text-black font-black rounded-3xl hover:bg-gray-200 transition-all active:scale-95 shadow-xl">CONTINUAR</button>
+              </div>
+            </div>
+          )}
+
+          {/* PASO 3: INSPIRACIÓN / REFERENCIA */}
+          {step === 3 && (
+            <div className="animate-in fade-in slide-in-from-right-6 duration-500">
+              <span className="text-[10px] font-black text-purple-500 uppercase tracking-[0.3em] mb-4 block">Dirección de Arte</span>
+              <h2 className="text-5xl font-black mb-6 italic tracking-tight">EL ESTILO <span className="text-white/20">VISUAL</span></h2>
+              <p className="text-gray-400 mb-12 text-lg font-medium">Usa una referencia que te guste o deja que nuestra IA cree un diseño original único.</p>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                 <div className="bg-[#080808] p-12 rounded-[3.5rem] border border-white/5 hover:border-white/10 transition-all">
+                    <p className="text-[10px] font-black uppercase text-gray-500 mb-8 tracking-[0.2em] text-center">Sube tu Referencia</p>
+                    <ImageUploader label="" images={referenceImage} setImages={setReferenceImage} maxImages={1} description="Opcional: Captura de pantalla de un diseño que te guste" />
+                 </div>
+                 
+                 <div className="bg-[#080808] p-12 rounded-[3.5rem] border border-white/5">
+                    <p className="text-[10px] font-black uppercase text-gray-500 mb-8 tracking-[0.2em] text-center">Galería de Estilos</p>
+                    <div className="grid grid-cols-3 gap-4">
+                       {templates.map((url, i) => (
+                         <div 
+                           key={i} 
+                           onClick={() => setReferenceImage([url])}
+                           className={`aspect-[9/16] rounded-2xl overflow-hidden border-2 cursor-pointer transition-all duration-300 ${referenceImage[0] === url ? 'border-purple-500 scale-95 shadow-[0_0_20px_rgba(147,51,234,0.4)]' : 'border-transparent opacity-40 hover:opacity-100 hover:scale-105'}`}
+                         >
+                           <img src={url} className="w-full h-full object-cover" alt="Templante" />
+                         </div>
+                       ))}
+                       <button onClick={() => setReferenceImage([])} className={`aspect-[9/16] rounded-2xl border-2 border-dashed flex flex-col items-center justify-center text-[8px] font-black uppercase text-center p-2 transition-all ${referenceImage.length === 0 ? 'border-purple-500 bg-purple-500/10 text-purple-400' : 'border-white/10 text-gray-600 hover:text-white hover:border-white/30'}`}>
+                          CREATIVIDAD LIBRE
+                       </button>
+                    </div>
+                 </div>
+              </div>
+
+              <div className="mt-16 flex justify-between">
+                <button onClick={prevStep} className="px-12 py-6 bg-white/5 text-white font-black rounded-3xl hover:bg-white/10 transition-all border border-white/5">ATRÁS</button>
+                <button onClick={nextStep} className="px-14 py-6 bg-white text-black font-black rounded-3xl hover:bg-gray-200 transition-all shadow-xl">CONTINUAR</button>
+              </div>
+            </div>
+          )}
+
+          {/* PASO 4: DATOS REALES (NO ARBITRARIOS) */}
+          {step === 4 && (
+            <div className="animate-in fade-in slide-in-from-right-6 duration-500">
+              <span className="text-[10px] font-black text-purple-500 uppercase tracking-[0.3em] mb-4 block">Estrategia de Venta</span>
+              <h2 className="text-5xl font-black mb-6 italic tracking-tight">DATOS <span className="text-white/20">REALES</span></h2>
+              <p className="text-gray-400 mb-12 text-lg font-medium">Ingresa el contenido exacto. Nuestra IA no inventará datos; usará exactamente lo que tú digas.</p>
+              
+              <div className="bg-[#080808] p-16 rounded-[4rem] border border-white/5 shadow-3xl grid grid-cols-1 md:grid-cols-2 gap-10">
+                 <div className="space-y-8">
+                    <div className="group">
+                       <label className="text-[10px] font-black text-gray-600 uppercase tracking-widest ml-1 group-focus-within:text-purple-500 transition-colors">Nombre del Negocio</label>
+                       <input type="text" value={restaurantInfo.name} onChange={e => setRestaurantInfo({...restaurantInfo, name: e.target.value})} className="w-full mt-3 bg-white/5 p-6 rounded-3xl border border-white/10 outline-none focus:border-purple-500/50 transition-all font-bold text-lg" placeholder="Ej: Gastro King" />
+                    </div>
+                    <div>
+                       <label className="text-[10px] font-black text-gray-600 uppercase tracking-widest ml-1">Producto Estrella</label>
+                       <input type="text" value={restaurantInfo.product} onChange={e => setRestaurantInfo({...restaurantInfo, product: e.target.value})} className="w-full mt-3 bg-white/5 p-6 rounded-3xl border border-white/10 outline-none focus:border-purple-500/50 transition-all font-bold text-lg" placeholder="Ej: Pizza Napolitana" />
+                    </div>
+                    <div>
+                       <label className="text-[10px] font-black text-gray-600 uppercase tracking-widest ml-1">Promoción o Precio</label>
+                       <input type="text" value={restaurantInfo.pricePromo} onChange={e => setRestaurantInfo({...restaurantInfo, pricePromo: e.target.value})} className="w-full mt-3 bg-white/5 p-6 rounded-3xl border border-white/10 outline-none focus:border-purple-500/50 transition-all font-black text-purple-500 text-xl" placeholder="Ej: Solo $12.99 / 2x1 Martes" />
+                    </div>
+                 </div>
+                 <div className="space-y-8">
+                    <div>
+                       <label className="text-[10px] font-black text-gray-600 uppercase tracking-widest ml-1">WhatsApp de Pedidos</label>
+                       <input type="text" value={restaurantInfo.phone} onChange={e => setRestaurantInfo({...restaurantInfo, phone: e.target.value})} className="w-full mt-3 bg-white/5 p-6 rounded-3xl border border-white/10 outline-none focus:border-purple-500/50 transition-all font-bold" placeholder="Ej: +54 9 11 0000 0000" />
+                    </div>
+                    <div>
+                       <label className="text-[10px] font-black text-gray-600 uppercase tracking-widest ml-1">Llamada a la Acción</label>
+                       <input type="text" value={restaurantInfo.ctaText} onChange={e => setRestaurantInfo({...restaurantInfo, ctaText: e.target.value})} className="w-full mt-3 bg-white/5 p-6 rounded-3xl border border-white/10 outline-none focus:border-purple-500/50 transition-all font-bold" placeholder="Ej: ¡Pide por Rappi ahora!" />
+                    </div>
+                    <div className="p-8 bg-purple-500/5 rounded-3xl border border-purple-500/10 flex items-center gap-4">
+                       <div className="w-3 h-3 rounded-full bg-purple-500 shadow-[0_0_10px_rgba(147,51,234,0.8)]"></div>
+                       <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Diseño optimizado para <span className="text-white">Conversión</span></p>
+                    </div>
+                 </div>
+              </div>
+
+              <div className="mt-16 flex justify-between">
+                <button onClick={prevStep} className="px-12 py-6 bg-white/5 text-white font-black rounded-3xl hover:bg-white/10 transition-all">ATRÁS</button>
+                <button onClick={nextStep} className="px-14 py-6 bg-white text-black font-black rounded-3xl hover:bg-gray-200 transition-all shadow-xl">CONTINUAR AL FINAL</button>
+              </div>
+            </div>
+          )}
+
+          {/* PASO 5: FORMATO Y GENERACIÓN */}
+          {step === 5 && (
+            <div className="animate-in fade-in slide-in-from-right-6 duration-500 text-center">
+              <span className="text-[10px] font-black text-purple-500 uppercase tracking-[0.3em] mb-4 block">Toque Final</span>
+              <h2 className="text-5xl font-black mb-6 italic tracking-tight">EL FORMATO</h2>
+              <p className="text-gray-400 mb-16 text-lg font-medium max-w-xl mx-auto">Selecciona dónde vas a publicar tu anuncio. Ajustaremos el lienzo automáticamente.</p>
+              
+              <div className="flex justify-center gap-10 mb-20">
+                 <button onClick={() => setAspectRatio('1:1')} className={`group relative w-72 p-12 rounded-[4rem] border-2 transition-all duration-500 ${aspectRatio === '1:1' ? 'border-purple-500 bg-purple-500/10 shadow-[0_0_40px_rgba(147,51,234,0.2)]' : 'border-white/5 hover:border-white/10'}`}>
+                    <div className="aspect-square bg-white/10 rounded-3xl mb-8 flex items-center justify-center text-[10px] font-black group-hover:bg-white/20 transition-all shadow-inner">POST</div>
+                    <p className="font-black text-sm uppercase tracking-widest mb-1">Cuadrado (1:1)</p>
+                    <p className="text-[10px] text-gray-600 font-bold uppercase tracking-tighter">Facebook / Instagram Feed</p>
+                 </button>
+                 
+                 <button onClick={() => setAspectRatio('9:16')} className={`group relative w-72 p-12 rounded-[4rem] border-2 transition-all duration-500 ${aspectRatio === '9:16' ? 'border-purple-500 bg-purple-500/10 shadow-[0_0_40px_rgba(147,51,234,0.2)]' : 'border-white/5 hover:border-white/10'}`}>
+                    <div className="aspect-[9/16] bg-white/10 rounded-3xl mb-8 mx-auto w-24 flex items-center justify-center text-[10px] font-black group-hover:bg-white/20 transition-all shadow-inner">STORY</div>
+                    <p className="font-black text-sm uppercase tracking-widest mb-1">Vertical (9:16)</p>
+                    <p className="text-[10px] text-gray-600 font-bold uppercase tracking-tighter">Stories / Reels / TikTok</p>
+                 </button>
+              </div>
+
+              <div className="max-w-md mx-auto relative group">
+                <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 to-pink-600 rounded-[2.5rem] blur opacity-30 group-hover:opacity-60 transition duration-1000 group-hover:duration-200"></div>
+                <button 
+                  onClick={handleGenerate}
+                  disabled={status === GenerationStatus.DESIGNING}
+                  className="relative w-full py-10 bg-black border border-white/20 rounded-[2.5rem] font-black text-2xl flex items-center justify-center gap-5 transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {status === GenerationStatus.DESIGNING ? (
+                    <div className="flex items-center gap-4">
+                       <svg className="animate-spin h-8 w-8 text-purple-500" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                       <span className="animate-pulse tracking-widest">RENDERIZANDO...</span>
+                    </div>
+                  ) : "GENERAR MI FLYER PROFESIONAL"}
+                </button>
+              </div>
+              
+              <button onClick={prevStep} className="mt-12 text-gray-500 font-black text-[10px] uppercase tracking-[0.4em] hover:text-white transition-colors">Modificar Contenido</button>
+            </div>
+          )}
+
+          {/* PASO 6: RESULTADO FINAL */}
+          {step === 6 && generatedFlyer && (
+            <div className="animate-in fade-in zoom-in-95 duration-1000 max-w-xl mx-auto">
+               <div className="bg-[#080808] p-12 rounded-[5rem] border border-white/5 shadow-[0_50px_100px_-20px_rgba(0,0,0,1)]">
+                  <div className="flex justify-between items-center mb-12 px-6">
+                     <div>
+                        <h2 className="text-3xl font-black italic tracking-tighter">DISEÑO FINALIZADO</h2>
+                        <p className="text-[10px] font-black text-purple-500 uppercase tracking-[0.3em] mt-1">Gastro AI Engine v2.5</p>
+                     </div>
+                     <button onClick={() => setStep(1)} className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center text-gray-500 hover:text-white transition-all hover:bg-white/10">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                     </button>
+                  </div>
+                  
+                  <div className={`rounded-[3.5rem] overflow-hidden border border-white/5 bg-black ${aspectRatio === '9:16' ? 'aspect-[9/16]' : 'aspect-square'} mb-14 shadow-2xl relative group`}>
+                     <img src={generatedFlyer.url} className="w-full h-full object-contain" alt="Resultado Final" />
+                     <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-all duration-500 flex flex-col items-center justify-center p-12 text-center backdrop-blur-sm">
+                        <div className="w-20 h-20 bg-green-500/20 rounded-full flex items-center justify-center mb-6 text-green-500 border border-green-500/30">
+                           <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                        </div>
+                        <p className="text-2xl font-black italic mb-4">¿Te gusta el resultado?</p>
+                        <p className="text-xs text-gray-400 font-medium leading-relaxed">Este diseño ha sido optimizado con los datos de tu menú y tus colores de marca para asegurar la máxima conversión en redes sociales.</p>
+                     </div>
+                  </div>
+
+                  <button 
+                    onClick={() => downloadImage(generatedFlyer.url, `MR-DISEÑO-${restaurantInfo.product}.png`)}
+                    className="w-full py-8 bg-white text-black font-black rounded-[2.5rem] text-xl hover:bg-gray-100 transition-all flex items-center justify-center gap-4 shadow-2xl active:scale-95"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                    DESCARGAR EN ALTA RESOLUCIÓN
+                  </button>
+               </div>
+               
+               <p className="text-center mt-16 text-gray-700 text-[10px] font-black uppercase tracking-[0.5em] animate-pulse">MR DISEÑO Studio Output • Proudly Made with Gemini</p>
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-12 p-6 bg-red-500/5 border border-red-500/10 rounded-[2rem] text-red-500 text-center font-black text-xs uppercase tracking-widest animate-in fade-in slide-in-from-top-4 duration-500">
+              <span className="block mb-1">¡UPS! ALGO SALIÓ MAL</span>
+              <span className="text-red-300 opacity-60 text-[10px] font-medium">{error}</span>
+            </div>
+          )}
+        </div>
       </main>
-      {isGalleryOpen && <GalleryModal />}
-
-      {/* Floating Whatsapp Button */}
-      <div className="fixed bottom-10 right-10 z-40">
-        <div className="w-16 h-16 bg-[#25D366] rounded-full flex items-center justify-center shadow-2xl cursor-pointer hover:scale-110 active:scale-90 transition-all duration-300">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-9 w-9 text-white" fill="currentColor" viewBox="0 0 448 512"><path d="M380.9 97.1C339 55.1 283.2 32 223.9 32c-122.4 0-222 99.6-222 222 0 39.1 10.2 77.3 29.6 111L0 480l117.7-30.9c32.4 17.7 68.9 27 106.1 27h.1c122.3 0 224.1-99.6 224.1-222 0-59.3-25.2-115-67.1-157zm-157 341.6c-33.2 0-65.7-8.9-94-25.7l-6.7-4-69.8 18.3L72 359.2l-4.4-7c-18.5-29.4-28.2-63.3-28.2-98.2 0-101.7 82.8-184.5 184.6-184.5 49.3 0 95.6 19.2 130.4 54.1 34.8 34.9 56.2 81.2 56.1 130.5 0 101.8-84.9 184.6-186.6 184.6zm101.2-138.2c-5.5-2.8-32.8-16.2-37.9-18-5.1-1.9-8.8-2.8-12.5 2.8-3.7 5.6-14.3 18-17.6 21.8-3.2 3.7-6.5 4.2-12 1.4-5.5-2.8-23.2-8.5-44.2-27.1-16.4-14.6-27.4-32.6-30.6-38.2-3.2-5.6-.3-8.6 2.4-11.3 2.5-2.4 5.5-6.5 8.3-9.7 2.8-3.2 3.7-5.5 5.5-9.2 1.8-3.7.9-6.9-.5-9.7-1.4-2.8-12.5-30.1-17.1-41.2-4.5-10.8-9.1-9.3-12.5-9.5-3.2-.2-6.9-.2-10.6-.2-3.7 0-9.7 1.4-14.8 6.9-5.1 5.6-19.4 19-19.4 46.3 0 27.3 19.9 53.7 22.6 57.4 2.8 3.7 39.1 59.7 94.8 83.8 13.2 5.8 23.5 9.2 31.6 11.8 13.3 4.2 25.4 3.6 35 2.2 10.7-1.6 32.8-13.4 37.4-26.4 4.6-13 4.6-24.1 3.2-26.4-1.3-2.5-5-3.9-10.5-6.6z"/></svg>
-        </div>
-      </div>
     </div>
   );
 };

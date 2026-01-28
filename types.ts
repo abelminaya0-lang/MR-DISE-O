@@ -6,6 +6,8 @@ export interface RestaurantInfo {
   context: 'delivery' | 'local' | 'temporada';
   product: string;
   pricePromo: string;
+  phone?: string;
+  ctaText?: string;
   quality: 'standard' | 'ultra';
   logo?: string;
   brandColor?: string;
@@ -20,6 +22,7 @@ export interface GeneratedFlyer {
 export enum GenerationStatus {
   IDLE = 'IDLE',
   ANALYZING = 'ANALYZING',
+  BRANDING = 'BRANDING',
   DESIGNING = 'DESIGNING',
   COMPLETED = 'COMPLETED',
   ERROR = 'ERROR'
